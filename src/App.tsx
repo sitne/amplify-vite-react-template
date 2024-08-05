@@ -1,56 +1,102 @@
-import { Authenticator } from '@aws-amplify/ui-react'
-import '@aws-amplify/ui-react/styles.css'
-import { useEffect, useState } from "react";
-import type { Schema } from "../amplify/data/resource";
-import { generateClient } from "aws-amplify/data";
+import { useState } from 'react'
+import './App.css'
+import reactLogo from './assets/react.svg'
+import viteLogo from '/vite.svg'
 
-const client = generateClient<Schema>();
+import { Authenticator } from '@aws-amplify/ui-react'
+import { InvokeCommand, InvokeWithResponseStreamCommand, LambdaClient } from '@aws-sdk/client-lambda'
+import { fetchAuthSession } from 'aws-amplify/auth'
+
+import outputs from "../amplify_outputs.json"
+
 
 function App() {
-  const [todos, setTodos] = useState<Array<Schema["Todo"]["type"]>>([]);
+  const [text, setText] = useState("")
+  const [prompt, setPrompt] = useState("")
+  const [aiMessage, setAiMessage] = useState("")
 
-  useEffect(() => {
-    client.models.Todo.observeQuery().subscribe({
-      next: (data) => setTodos([...data.items]),
+  async function invokeHelloWorld() {
+
+    const { credentials } = await fetchAuthSession()
+    const awsRegion = outputs.auth.aws_region
+    const functionName = outputs.custom.helloWorldFunctionName
+
+    const labmda = new LambdaClient({ credentials: credentials, region: awsRegion })
+    const command = new InvokeCommand({
+      FunctionName: functionName,
     });
-  }, []);
+    const apiResponse = await labmda.send(command);
 
-    
-  function deleteTodo(id: string) {
-    client.models.Todo.delete({ id })
+    if (apiResponse.Payload) {
+      const payload = JSON.parse(new TextDecoder().decode(apiResponse.Payload))
+      setText(payload.message)
+    }
   }
-  function createTodo() {
-    client.models.Todo.create({ content: window.prompt("Todo content") });
+
+  async function invokeBedrock() {
+
+    const { credentials } = await fetchAuthSession()
+    const awsRegion = outputs.auth.aws_region
+    const functionName = outputs.custom.invokeBedrockFunctionName
+
+    const labmda = new LambdaClient({ credentials: credentials, region: awsRegion })
+    const command = new InvokeWithResponseStreamCommand({
+      FunctionName: functionName,
+      Payload: new TextEncoder().encode(JSON.stringify({ prompt: prompt }))
+    })
+    const apiResponse = await labmda.send(command);
+
+    let completeMessage = ''
+    if (apiResponse.EventStream) {
+      for await (const item of apiResponse.EventStream) {
+        if (item.PayloadChunk) {
+          const payload = new TextDecoder().decode(item.PayloadChunk.Payload)
+          completeMessage = completeMessage + payload
+          setAiMessage(completeMessage)
+        }
+      }
+    }
   }
 
   return (
-       
     <Authenticator>
       {({ signOut, user }) => (
-      <main>
-        <h1>{user?.signInDetails?.loginId}'s todos</h1>
-        <h1>My todos</h1>
-        <button onClick={createTodo}>+ new</button>
-        <ul>
-          {todos.map((todo) => (
-            <li 
-            onClick={() => deleteTodo(todo.id)}
-            key={todo.id}>{todo.content}</li>
-          ))}
-        </ul>
-        <div>
-          🥳 App successfully hosted. Try creating a new todo.
-          <br />
-          <a href="https://docs.amplify.aws/react/start/quickstart/#make-frontend-updates">
-            Review next step of this tutorial.
-          </a>
-        </div>
-        <button onClick={signOut}>Sign out</button>
-      </main>
-          
-        )}
-        </Authenticator>
-  );
+        <>
+          <div>
+            <a href="https://docs.amplify.aws" target="_blank">
+              <img src="https://docs.amplify.aws/assets/icon/favicon-purple-96x96.png" className="logo amplify" alt="Amplify logo" />
+            </a>
+            <a href="https://vitejs.dev" target="_blank">
+              <img src={viteLogo} className="logo" alt="Vite logo" />
+            </a>
+            <a href="https://react.dev" target="_blank">
+              <img src={reactLogo} className="logo react" alt="React logo" />
+            </a>
+          </div>
+          <h1>Amplify + Vite + React</h1>
+          <p>
+            Hello, {user?.signInDetails?.loginId}
+            <br />
+            <button onClick={signOut}>Sign Out</button>
+          </p>
+          <p>
+            <button onClick={invokeHelloWorld}>invokeHelloWorld</button>
+            <div>{text}</div>
+          </p>
+          <p>
+            <textarea
+              onChange={(e) => setPrompt(e.target.value)}
+              value={prompt}
+              style={{ width: '50vw', textAlign: 'left' }}
+            ></textarea>
+            <br />
+            <button onClick={invokeBedrock}>invokeBedrock</button>
+            <div style={{ width: '50vw', textAlign: 'left' }}>{aiMessage}</div>
+          </p>
+        </>
+      )}
+    </Authenticator>
+  )
 }
 
-export default App;
+export default App
